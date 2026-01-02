@@ -3,14 +3,19 @@ import { LogViewer } from "@/components/logs/log-viewer";
 import { supabase } from "@/lib/supabase";
 
 export default async function LogsPage({
+    params,
     searchParams,
 }: {
-    searchParams: { clientId?: string, assistantId?: string };
+    params: Promise<{ clientId: string }>;
+    searchParams: Promise<{ assistantId?: string }>;
 }) {
+    const { clientId } = await params;
+    const { assistantId } = await searchParams;
+
     let vapiKey: string | undefined = undefined;
 
-    if (searchParams?.clientId) {
-        const { data } = await supabase.from('clients').select('vapi_key').eq('id', searchParams.clientId).single();
+    if (clientId) {
+        const { data } = await supabase.from('clients').select('vapi_key').eq('id', clientId).single();
         if (data) {
             vapiKey = data.vapi_key;
         }
@@ -18,7 +23,7 @@ export default async function LogsPage({
 
     // Fetch calls, agents, and phone numbers
     const [calls, agents, phoneNumbers] = await Promise.all([
-        listCalls(vapiKey, searchParams?.assistantId),
+        listCalls(vapiKey, assistantId),
         listAgents(vapiKey),
         listPhoneNumbers(vapiKey)
     ]);
