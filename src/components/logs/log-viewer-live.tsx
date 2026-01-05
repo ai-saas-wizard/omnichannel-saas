@@ -37,12 +37,12 @@ interface LogViewerWithLiveProps {
 function activeCallToDisplayCall(activeCall: ActiveCall): DisplayCall {
     return {
         id: activeCall.vapi_call_id,
-        assistantId: activeCall.assistant_id || undefined,
-        status: activeCall.status as 'queued' | 'ringing' | 'in-progress' | 'forwarding' | 'ended',
-        startedAt: activeCall.started_at || undefined,
-        customer: { number: activeCall.customer_number || undefined },
+        assistantId: activeCall.assistant_id ?? undefined,
+        status: activeCall.status,
+        startedAt: activeCall.started_at ?? undefined,
+        customer: { number: activeCall.customer_number ?? undefined },
         analysis: activeCall.summary ? { summary: activeCall.summary } : undefined,
-        transcript: activeCall.transcript || undefined,
+        transcript: activeCall.transcript ?? undefined,
         isLive: true,
         messages: activeCall.transcript ?
             activeCall.transcript.split('\n').filter(Boolean).map((line) => {
@@ -52,7 +52,7 @@ function activeCallToDisplayCall(activeCall: ActiveCall): DisplayCall {
                     message: msgParts.join(': ') || line
                 };
             }) : undefined
-    };
+    } as DisplayCall;
 }
 
 function LiveDuration({ startedAt }: { startedAt: string }) {
