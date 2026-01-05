@@ -1,5 +1,5 @@
 import { listCalls, listAgents, listPhoneNumbers } from "@/lib/vapi";
-import { LogViewer } from "@/components/logs/log-viewer";
+import { LogsPageClient } from "@/components/logs/logs-page-client";
 import { supabase } from "@/lib/supabase";
 
 export default async function LogsPage({
@@ -30,7 +30,13 @@ export default async function LogsPage({
 
     return (
         <div className="h-[calc(100vh-64px)] overflow-hidden">
-            <LogViewer calls={calls} agents={agents} phoneNumbers={phoneNumbers} />
+            <LogsPageClient
+                calls={calls}
+                agents={agents}
+                phoneNumbers={phoneNumbers}
+                clientId={clientId}
+            />
         </div>
     );
 }
+
