@@ -368,8 +368,9 @@ export async function POST(request: Request) {
         }
 
         // --- ACTIVE CALL TRACKING ---
+        // Vapi sends different event types - handle all of them
         console.log('[VAPI WEBHOOK] Processing event:', messageType);
-        if (messageType === 'call-started') {
+        if (messageType === 'call-started' || messageType === 'assistant-request' || messageType === 'assistant.started') {
             await handleCallStarted(call);
         } else if (messageType === 'status-update') {
             await handleCallUpdate(call);
