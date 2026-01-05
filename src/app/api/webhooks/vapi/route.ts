@@ -138,9 +138,11 @@ async function handleCallUpdate(
 
 // Handle End of Call - Cleanup and History
 async function handleEndOfCall(call: NonNullable<VapiWebhookPayload['message']['call']>) {
+    console.log('[VAPI WEBHOOK] handleEndOfCall called for:', call.id);
     try {
         // 1. Remove from active calls
-        await supabase.from('active_calls').delete().eq('vapi_call_id', call.id);
+        const deleteResult = await supabase.from('active_calls').delete().eq('vapi_call_id', call.id);
+        console.log('[VAPI WEBHOOK] Delete result:', deleteResult);
 
         // 2. Update Contact History (CRM)
         await updateContactAfterCall(call);
@@ -161,6 +163,7 @@ async function handleEndOfCall(call: NonNullable<VapiWebhookPayload['message']['
                 }
             }
         }
+        console.log('[VAPI WEBHOOK] handleEndOfCall completed for:', call.id);
 
     } catch (error) {
         console.error('Error handling end of call:', error);
