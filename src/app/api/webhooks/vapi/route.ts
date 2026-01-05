@@ -61,10 +61,18 @@ async function getClientIdByOrgId(orgId: string): Promise<string | null> {
 
 // Handle Call Started - Create Active Call
 async function handleCallStarted(call: NonNullable<VapiWebhookPayload['message']['call']>) {
+    console.log('[VAPI WEBHOOK] handleCallStarted called:', { callId: call.id, orgId: call.orgId });
     try {
-        if (!call.orgId) return;
+        if (!call.orgId) {
+            console.log('[VAPI WEBHOOK] No orgId, skipping');
+            return;
+        }
         const clientId = await getClientIdByOrgId(call.orgId);
-        if (!clientId) return;
+        console.log('[VAPI WEBHOOK] Client lookup result:', { orgId: call.orgId, clientId });
+        if (!clientId) {
+            console.log('[VAPI WEBHOOK] No client found for orgId:', call.orgId);
+            return;
+        }
 
         // Check if already exists to avoid duplicates
         const { data: existing } = await supabase
@@ -73,9 +81,12 @@ async function handleCallStarted(call: NonNullable<VapiWebhookPayload['message']
             .eq('vapi_call_id', call.id)
             .single();
 
-        if (existing) return;
+        if (existing) {
+            console.log('[VAPI WEBHOOK] Call already exists, skipping insert:', call.id);
+            return;
+        }
 
-        await supabase.from('active_calls').insert({
+        const insertResult = await supabase.from('active_calls').insert({
             vapi_call_id: call.id,
             client_id: clientId,
             status: call.status || 'ringing',
@@ -85,8 +96,9 @@ async function handleCallStarted(call: NonNullable<VapiWebhookPayload['message']
             type: call.type || 'inbound',
             last_active_at: new Date().toISOString()
         });
+        console.log('[VAPI WEBHOOK] Insert result:', insertResult);
     } catch (error) {
-        console.error('Error handling call started:', error);
+        console.error('[VAPI WEBHOOK] Error handling call started:', error);
     }
 }
 
@@ -348,11 +360,15 @@ export async function POST(request: Request) {
         const messageType = body.message?.type;
         const call = body.message?.call;
 
+        console.log('[VAPI WEBHOOK] Received:', { messageType, callId: call?.id, orgId: call?.orgId, hasAssistantId: !!call?.assistantId });
+
         if (!call || !call.assistantId) {
+            console.log('[VAPI WEBHOOK] Skipping - no call or assistantId');
             return NextResponse.json({ received: true });
         }
 
         // --- ACTIVE CALL TRACKING ---
+        console.log('[VAPI WEBHOOK] Processing event:', messageType);
         if (messageType === 'call-started') {
             await handleCallStarted(call);
         } else if (messageType === 'status-update') {
