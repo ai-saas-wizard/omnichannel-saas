@@ -379,15 +379,21 @@ export async function POST(request: Request) {
             return NextResponse.json({ received: true });
         }
 
-        console.log('[VAPI WEBHOOK] Processing call:', call.id, 'type:', messageType);
+        console.log('[VAPI WEBHOOK] Processing call:', call.id, 'type:', messageType, 'status:', call.status);
 
         // --- ACTIVE CALL TRACKING ---
         // Handle any event that has call data - insert if new, update if exists
         if (messageType === 'call-started' || messageType === 'assistant-request' || messageType === 'assistant.started' || messageType === 'speech-update') {
             await handleCallStarted(call);
         } else if (messageType === 'status-update') {
-            await handleCallStarted(call); // Ensure call exists
-            await handleCallUpdate(call);
+            // Check if call has ended - Vapi sends status-update with status=ended
+            if (call.status === 'ended') {
+                console.log('[VAPI WEBHOOK] Call ended via status-update:', call.id);
+                await handleEndOfCall(call);
+            } else {
+                await handleCallStarted(call); // Ensure call exists
+                await handleCallUpdate(call);
+            }
         } else if (messageType === 'conversation-update') {
             await handleCallStarted(call); // Ensure call exists
             await handleCallUpdate(call, conversation);
