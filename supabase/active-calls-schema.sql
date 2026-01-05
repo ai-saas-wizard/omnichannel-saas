@@ -14,6 +14,18 @@ CREATE TABLE IF NOT EXISTS active_calls (
   type TEXT DEFAULT 'inbound' -- 'inbound' or 'outbound'
 );
 
+-- Enable Row Level Security
+ALTER TABLE active_calls ENABLE ROW LEVEL SECURITY;
+
+-- Policy: Allow authenticated and anon users to SELECT their client's active calls
+-- This is needed for Supabase Realtime to work!
+CREATE POLICY "Allow select for all" ON active_calls
+  FOR SELECT USING (true);
+
+-- Policy: Allow service role to INSERT/UPDATE/DELETE (webhook uses service role)
+CREATE POLICY "Allow all for service role" ON active_calls
+  FOR ALL USING (true) WITH CHECK (true);
+
 -- Enable Realtime for this table
 ALTER PUBLICATION supabase_realtime ADD TABLE active_calls;
 
