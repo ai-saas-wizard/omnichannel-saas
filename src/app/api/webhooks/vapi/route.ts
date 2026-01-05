@@ -356,14 +356,25 @@ async function forwardToWebhook(
 
 export async function POST(request: Request) {
     try {
-        const body = await request.json() as VapiWebhookPayload;
-        const messageType = body.message?.type;
-        const call = body.message?.call;
+        const body = await request.json();
 
-        console.log('[VAPI WEBHOOK] Received:', { messageType, callId: call?.id, orgId: call?.orgId, hasAssistantId: !!call?.assistantId });
+        // Log raw payload structure for debugging
+        console.log('[VAPI WEBHOOK] Raw payload keys:', Object.keys(body));
+        console.log('[VAPI WEBHOOK] Has message?:', !!body.message);
+        console.log('[VAPI WEBHOOK] Message type:', body.message?.type);
+        console.log('[VAPI WEBHOOK] Has call?:', !!body.message?.call);
+        console.log('[VAPI WEBHOOK] call.id:', body.message?.call?.id);
+        console.log('[VAPI WEBHOOK] call.orgId:', body.message?.call?.orgId);
+        console.log('[VAPI WEBHOOK] call.assistantId:', body.message?.call?.assistantId);
 
-        if (!call || !call.assistantId) {
-            console.log('[VAPI WEBHOOK] Skipping - no call or assistantId');
+        const vapiBody = body as VapiWebhookPayload;
+        const messageType = vapiBody.message?.type;
+        const call = vapiBody.message?.call;
+
+        // For active calls, we only need the call object (not necessarily assistantId)
+        // We'll skip only if there's no call at all
+        if (!call) {
+            console.log('[VAPI WEBHOOK] Skipping - no call object');
             return NextResponse.json({ received: true });
         }
 
