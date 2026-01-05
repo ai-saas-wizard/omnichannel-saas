@@ -356,43 +356,49 @@ async function forwardToWebhook(
 
 export async function POST(request: Request) {
     try {
-        const body = await request.json();
+        const rawPayload = await request.json();
 
-        // Log raw payload structure for debugging
-        console.log('[VAPI WEBHOOK] Raw payload keys:', Object.keys(body));
-        console.log('[VAPI WEBHOOK] Has message?:', !!body.message);
-        console.log('[VAPI WEBHOOK] Message type:', body.message?.type);
-        console.log('[VAPI WEBHOOK] Has call?:', !!body.message?.call);
-        console.log('[VAPI WEBHOOK] call.id:', body.message?.call?.id);
-        console.log('[VAPI WEBHOOK] call.orgId:', body.message?.call?.orgId);
-        console.log('[VAPI WEBHOOK] call.assistantId:', body.message?.call?.assistantId);
+        // Vapi wraps payload in { headers, params, query, body, webhookUrl, executionMode }
+        // The actual message is inside body.body.message
+        const payload = rawPayload.body || rawPayload;
+        const message = payload.message || payload;
 
-        const vapiBody = body as VapiWebhookPayload;
-        const messageType = vapiBody.message?.type;
-        const call = vapiBody.message?.call;
+        console.log('[VAPI WEBHOOK] Payload structure - has rawPayload.body?:', !!rawPayload.body);
+        console.log('[VAPI WEBHOOK] Message type:', message?.type);
+        console.log('[VAPI WEBHOOK] Has call?:', !!message?.call);
+        console.log('[VAPI WEBHOOK] call.id:', message?.call?.id);
+        console.log('[VAPI WEBHOOK] call.orgId:', message?.call?.orgId);
 
-        // For active calls, we only need the call object (not necessarily assistantId)
-        // We'll skip only if there's no call at all
+        const messageType = message?.type;
+        const call = message?.call;
+        const conversation = message?.conversation;
+
+        // Skip if no call object
         if (!call) {
             console.log('[VAPI WEBHOOK] Skipping - no call object');
             return NextResponse.json({ received: true });
         }
 
+        console.log('[VAPI WEBHOOK] Processing call:', call.id, 'type:', messageType);
+
         // --- ACTIVE CALL TRACKING ---
-        // Vapi sends different event types - handle all of them
-        console.log('[VAPI WEBHOOK] Processing event:', messageType);
-        if (messageType === 'call-started' || messageType === 'assistant-request' || messageType === 'assistant.started') {
+        // Handle any event that has call data - insert if new, update if exists
+        if (messageType === 'call-started' || messageType === 'assistant-request' || messageType === 'assistant.started' || messageType === 'speech-update') {
             await handleCallStarted(call);
         } else if (messageType === 'status-update') {
+            await handleCallStarted(call); // Ensure call exists
             await handleCallUpdate(call);
         } else if (messageType === 'conversation-update') {
-            await handleCallUpdate(call, body.message.conversation);
+            await handleCallStarted(call); // Ensure call exists
+            await handleCallUpdate(call, conversation);
         } else if (messageType === 'end-of-call-report') {
             await handleEndOfCall(call);
+        } else {
+            // For any other event type, try to create/update the call
+            await handleCallStarted(call);
         }
 
         // --- WEBHOOK FORWARDING LOGIC ---
-        // Map Vapi message types to our event types
         let eventType: string | null = null;
         if (messageType === 'status-update' && call.status === 'in-progress') {
             eventType = 'call.started';
@@ -437,7 +443,7 @@ export async function POST(request: Request) {
         }
 
         // Transform payload
-        const transformedPayload = transformPayload(body, eventType);
+        const transformedPayload = transformPayload({ message } as VapiWebhookPayload, eventType);
         if (!transformedPayload) {
             return NextResponse.json({ received: true });
         }
