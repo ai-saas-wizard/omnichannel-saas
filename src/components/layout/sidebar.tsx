@@ -32,6 +32,11 @@ const routes = [
         href: "/agents",
     },
     {
+        label: "Live Calls",
+        icon: Phone,
+        href: "/calls",
+    },
+    {
         label: "Contacts",
         icon: Users,
         href: "/contacts",
