@@ -8,16 +8,16 @@ export async function endActiveCall(clientId: string, vapiCallId: string) {
         // Get the client's Vapi API key
         const { data: client, error: clientError } = await supabase
             .from("clients")
-            .select("vapi_api_key")
+            .select("vapi_key")
             .eq("id", clientId)
             .single();
 
-        if (clientError || !client?.vapi_api_key) {
+        if (clientError || !client?.vapi_key) {
             return { success: false, error: "Client not found or missing Vapi API key" };
         }
 
         // End the call via Vapi API
-        const success = await endCall(vapiCallId, client.vapi_api_key);
+        const success = await endCall(vapiCallId, client.vapi_key);
 
         if (!success) {
             return { success: false, error: "Failed to end call via Vapi API" };
