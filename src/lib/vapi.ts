@@ -160,57 +160,35 @@ export async function listCalls(apiKey?: string, assistantId?: string): Promise<
     if (!token) return [];
 
     try {
-        // Vapi API uses limit and page for pagination
-        let allCalls: VapiCall[] = [];
-        let page = 1;
-        const limit = 100;
-        let hasMore = true;
-
-        while (hasMore) {
-            let url = `${VAPI_BASE_URL}/call?limit=${limit}&page=${page}`;
-            if (assistantId) {
-                url += `&assistantId=${assistantId}`;
-            }
-
-            const res = await fetch(url, {
-                headers: {
-                    Authorization: `Bearer ${token}`,
-                    'Content-Type': 'application/json',
-                },
-                next: { revalidate: 30 }
-            } as any);
-
-            if (!res.ok) break;
-
-            const data = await res.json();
-
-            // Vapi returns an array of calls
-            if (Array.isArray(data)) {
-                if (data.length === 0) {
-                    hasMore = false;
-                } else {
-                    allCalls = allCalls.concat(data);
-                    // If we got less than limit, we've reached the end
-                    if (data.length < limit) {
-                        hasMore = false;
-                    } else {
-                        page++;
-                    }
-                }
-            } else if (data.results && Array.isArray(data.results)) {
-                // Handle paginated response format
-                allCalls = allCalls.concat(data.results);
-                if (data.results.length < limit || !data.hasMore) {
-                    hasMore = false;
-                } else {
-                    page++;
-                }
-            } else {
-                break;
-            }
+        // Fetch calls with high limit - Vapi returns up to 1000
+        let url = `${VAPI_BASE_URL}/call?limit=1000`;
+        if (assistantId) {
+            url += `&assistantId=${assistantId}`;
         }
 
-        return allCalls;
+        const res = await fetch(url, {
+            headers: {
+                Authorization: `Bearer ${token}`,
+                'Content-Type': 'application/json',
+            },
+            next: { revalidate: 30 }
+        } as any);
+
+        if (!res.ok) {
+            console.error("Vapi API error:", res.status, await res.text());
+            return [];
+        }
+
+        const data = await res.json();
+
+        // Vapi returns an array of calls
+        if (Array.isArray(data)) {
+            return data;
+        } else if (data.results && Array.isArray(data.results)) {
+            return data.results;
+        }
+
+        return [];
     } catch (error) {
         console.error("Vapi Client Error:", error);
         return [];
