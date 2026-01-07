@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
 import { recordCallUsage } from "@/lib/billing";
+import { extractContactInfo } from "@/lib/openai-extractor";
 import crypto from "crypto";
 
 /**
@@ -38,6 +39,8 @@ interface VapiWebhookPayload {
                 structuredData?: {
                     name?: string;
                     email?: string;
+                    caller_name?: string;  // Alternative field from VAPI analysisPlan
+                    caller_email?: string; // Alternative field from VAPI analysisPlan
                 };
             };
         };
@@ -57,6 +60,66 @@ async function getClientIdByOrgId(orgId: string): Promise<string | null> {
         .eq('vapi_org_id', orgId)
         .single();
     return data?.id || null;
+}
+
+// Get contact context for assistant-request (inject into AI)
+async function getContactContext(call: NonNullable<VapiWebhookPayload['message']['call']>): Promise<{
+    variableValues: Record<string, any>;
+} | null> {
+    const phone = call?.customer?.number;
+    if (!phone || !call?.orgId) return null;
+
+    try {
+        const clientId = await getClientIdByOrgId(call.orgId);
+        if (!clientId) return null;
+
+        // Get or create contact
+        let { data: contact } = await supabase
+            .from('contacts')
+            .select('id, name, email, conversation_summary, total_calls, last_call_at')
+            .eq('client_id', clientId)
+            .eq('phone', phone)
+            .single();
+
+        // Create contact if doesn't exist
+        if (!contact) {
+            const { data: newContact } = await supabase
+                .from('contacts')
+                .insert({ client_id: clientId, phone, total_calls: 0 })
+                .select('id, name, email, conversation_summary, total_calls, last_call_at')
+                .single();
+            contact = newContact;
+        }
+
+        if (!contact) return null;
+
+        const isReturningCaller = (contact.total_calls || 0) > 0;
+
+        // Build context string for AI
+        let customerContext = '';
+        if (isReturningCaller) {
+            customerContext = `RETURNING CALLER DETECTED\nName: ${contact.name || 'Unknown'}\nPhone: ${phone}\nEmail: ${contact.email || 'Not provided'}\nPrevious Calls: ${contact.total_calls}\nLast Call: ${contact.last_call_at ? new Date(contact.last_call_at).toLocaleDateString() : 'Unknown'}\n\nCONVERSATION HISTORY:\n${contact.conversation_summary || 'No previous conversation summary.'}\n\nUse this context to personalize the conversation.`;
+        } else {
+            customerContext = `NEW CALLER\nPhone: ${phone}\nThis is their first time calling. Be welcoming and gather basic information.`;
+        }
+
+        console.log('[VAPI WEBHOOK] Returning context for', isReturningCaller ? 'returning' : 'new', 'caller:', phone);
+
+        return {
+            variableValues: {
+                customer_name: contact.name || '',
+                customer_phone: phone,
+                customer_email: contact.email || '',
+                customer_context: customerContext,
+                is_returning_caller: isReturningCaller,
+                total_previous_calls: contact.total_calls || 0,
+                contact_id: contact.id
+            }
+        };
+    } catch (error) {
+        console.error('[VAPI WEBHOOK] Error getting contact context:', error);
+        return null;
+    }
 }
 
 // Handle Call Started - Create Active Call
@@ -249,13 +312,39 @@ async function updateContactAfterCall(call: NonNullable<VapiWebhookPayload['mess
 
         if (newSummary) updateData.conversation_summary = updatedSummary;
 
-        if (call.analysis?.structuredData?.name) {
-            const { data: current } = await supabase.from('contacts').select('name').eq('id', contact.id).single();
-            if (!current?.name) updateData.name = call.analysis.structuredData.name;
+        // Extract name/email - try VAPI's built-in extraction first, then OpenAI fallback
+        let extractedName = call.analysis?.structuredData?.name ||
+            call.analysis?.structuredData?.caller_name || null;
+        let extractedEmail = call.analysis?.structuredData?.email ||
+            call.analysis?.structuredData?.caller_email || null;
+
+        // Use OpenAI extraction as fallback if transcript exists and we're missing data
+        if ((!extractedName || !extractedEmail) && call.transcript && call.transcript.length > 100) {
+            console.log('[VAPI WEBHOOK] Using OpenAI fallback for contact extraction');
+            try {
+                const aiExtracted = await extractContactInfo(call.transcript);
+                if (!extractedName && aiExtracted.name) {
+                    extractedName = aiExtracted.name;
+                    console.log('[VAPI WEBHOOK] OpenAI extracted name:', extractedName);
+                }
+                if (!extractedEmail && aiExtracted.email) {
+                    extractedEmail = aiExtracted.email;
+                    console.log('[VAPI WEBHOOK] OpenAI extracted email:', extractedEmail);
+                }
+            } catch (err) {
+                console.error('[VAPI WEBHOOK] OpenAI extraction failed:', err);
+            }
         }
-        if (call.analysis?.structuredData?.email) {
+
+        // Update contact with extracted name if we don't have one
+        if (extractedName) {
+            const { data: current } = await supabase.from('contacts').select('name').eq('id', contact.id).single();
+            if (!current?.name) updateData.name = extractedName;
+        }
+        // Update contact with extracted email if we don't have one
+        if (extractedEmail) {
             const { data: current } = await supabase.from('contacts').select('email').eq('id', contact.id).single();
-            if (!current?.email) updateData.email = call.analysis.structuredData.email;
+            if (!current?.email) updateData.email = extractedEmail;
         }
 
         await supabase.from('contacts').update(updateData).eq('id', contact.id);
@@ -392,7 +481,17 @@ export async function POST(request: Request) {
 
         // --- ACTIVE CALL TRACKING ---
         // Handle any event that has call data - insert if new, update if exists
-        if (messageType === 'call-started' || messageType === 'assistant-request' || messageType === 'assistant.started' || messageType === 'speech-update') {
+
+        // IMPORTANT: For assistant-request, we must return context for the AI
+        if (messageType === 'assistant-request') {
+            console.log('[VAPI WEBHOOK] assistant-request - getting contact context for:', call.customer?.number);
+            await handleCallStarted(call);
+            const context = await getContactContext(call);
+            console.log('[VAPI WEBHOOK] Returning context:', context ? 'found' : 'none');
+            return NextResponse.json(context || {});
+        }
+
+        if (messageType === 'call-started' || messageType === 'assistant.started' || messageType === 'speech-update') {
             await handleCallStarted(call);
         } else if (messageType === 'status-update') {
             // Check if call has ended - Vapi sends status-update with status=ended
