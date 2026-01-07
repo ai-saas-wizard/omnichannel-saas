@@ -17,6 +17,14 @@ import crypto from "crypto";
 interface VapiWebhookPayload {
     message: {
         type: string;
+        artifact?: {
+            messages?: Array<{
+                role: string;
+                message?: string;
+                content?: string;
+            }>;
+            transcript?: string;
+        };
         call?: {
             id: string;
             orgId: string;
@@ -39,8 +47,8 @@ interface VapiWebhookPayload {
                 structuredData?: {
                     name?: string;
                     email?: string;
-                    caller_name?: string;  // Alternative field from VAPI analysisPlan
-                    caller_email?: string; // Alternative field from VAPI analysisPlan
+                    caller_name?: string;
+                    caller_email?: string;
                 };
             };
         };
@@ -206,7 +214,10 @@ async function handleCallUpdate(
 }
 
 // Handle End of Call - Cleanup and History
-async function handleEndOfCall(call: NonNullable<VapiWebhookPayload['message']['call']>) {
+async function handleEndOfCall(
+    call: NonNullable<VapiWebhookPayload['message']['call']>,
+    artifact?: VapiWebhookPayload['message']['artifact']
+) {
     console.log('[VAPI WEBHOOK] handleEndOfCall called for:', call.id);
     try {
         // 1. Remove from active calls
@@ -214,7 +225,7 @@ async function handleEndOfCall(call: NonNullable<VapiWebhookPayload['message']['
         console.log('[VAPI WEBHOOK] Delete result:', deleteResult);
 
         // 2. Update Contact History (CRM)
-        await updateContactAfterCall(call);
+        await updateContactAfterCall(call, artifact);
 
         // 3. Record Usage for Billing
         if (call.orgId) {
@@ -240,8 +251,23 @@ async function handleEndOfCall(call: NonNullable<VapiWebhookPayload['message']['
 }
 
 // Update contact after call ends (Existing Logic)
-async function updateContactAfterCall(call: NonNullable<VapiWebhookPayload['message']['call']>) {
+async function updateContactAfterCall(
+    call: NonNullable<VapiWebhookPayload['message']['call']>,
+    artifact?: VapiWebhookPayload['message']['artifact']
+) {
     if (!call?.customer?.number || !call.orgId) return;
+
+    // Build transcript from artifact.messages if call.transcript is empty
+    let transcript = call.transcript || '';
+    if (!transcript && artifact?.messages) {
+        transcript = artifact.messages
+            .filter(m => m.role === 'user' || m.role === 'bot' || m.role === 'assistant')
+            .map(m => `${m.role}: ${m.message || m.content || ''}`)
+            .join('\n');
+        console.log('[VAPI WEBHOOK] Built transcript from artifact.messages, length:', transcript.length);
+    } else if (artifact?.transcript) {
+        transcript = artifact.transcript;
+    }
 
     try {
         const clientId = await getClientIdByOrgId(call.orgId);
@@ -284,7 +310,7 @@ async function updateContactAfterCall(call: NonNullable<VapiWebhookPayload['mess
             contact_id: contact.id,
             vapi_call_id: call.id,
             summary: call.analysis?.summary || null,
-            transcript: call.transcript || null,
+            transcript: transcript || null,  // Use the built transcript
             outcome: call.endedReason || call.status,
             duration_seconds: durationSeconds,
             called_at: call.startedAt || new Date().toISOString()
@@ -319,10 +345,10 @@ async function updateContactAfterCall(call: NonNullable<VapiWebhookPayload['mess
             call.analysis?.structuredData?.caller_email || null;
 
         // Use OpenAI extraction as fallback if transcript exists and we're missing data
-        if ((!extractedName || !extractedEmail) && call.transcript && call.transcript.length > 100) {
-            console.log('[VAPI WEBHOOK] Using OpenAI fallback for contact extraction');
+        if ((!extractedName || !extractedEmail) && transcript && transcript.length > 100) {
+            console.log('[VAPI WEBHOOK] Using OpenAI fallback for contact extraction, transcript length:', transcript.length);
             try {
-                const aiExtracted = await extractContactInfo(call.transcript);
+                const aiExtracted = await extractContactInfo(transcript);
                 if (!extractedName && aiExtracted.name) {
                     extractedName = aiExtracted.name;
                     console.log('[VAPI WEBHOOK] OpenAI extracted name:', extractedName);
@@ -497,7 +523,7 @@ export async function POST(request: Request) {
             // Check if call has ended - Vapi sends status-update with status=ended
             if (call.status === 'ended') {
                 console.log('[VAPI WEBHOOK] Call ended via status-update:', call.id);
-                await handleEndOfCall(call);
+                await handleEndOfCall(call, message?.artifact);
             } else {
                 await handleCallStarted(call); // Ensure call exists
                 await handleCallUpdate(call);
@@ -506,7 +532,7 @@ export async function POST(request: Request) {
             await handleCallStarted(call); // Ensure call exists
             await handleCallUpdate(call, conversation);
         } else if (messageType === 'end-of-call-report') {
-            await handleEndOfCall(call);
+            await handleEndOfCall(call, message?.artifact);
         } else {
             // For any other event type, try to create/update the call
             await handleCallStarted(call);
