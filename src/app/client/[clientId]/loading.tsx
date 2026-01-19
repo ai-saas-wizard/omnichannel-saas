@@ -2,7 +2,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 
 export default function Loading() {
     return (
-        <div className="p-8 space-y-8 animate-pulse">
+        <div className="p-8 space-y-8">
             <div className="flex items-center justify-between">
                 <div className="space-y-2">
                     <Skeleton className="h-8 w-64" />
