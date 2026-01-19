@@ -7,14 +7,16 @@
  * Run with: npx tsx scripts/sync-historical-calls.ts
  */
 
+import 'dotenv/config';
 import { createClient } from '@supabase/supabase-js';
 
-// Environment variables
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+// Environment variables (support both naming conventions)
+const SUPABASE_URL = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 const VAPI_BASE_URL = 'https://api.vapi.ai';
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+
 
 interface VapiCall {
     id: string;
@@ -70,6 +72,27 @@ async function fetchVapiCalls(apiKey: string, limit: number = 100): Promise<Vapi
     }
 }
 
+// Fetch individual call details to get transcript (list endpoint doesn't include it)
+async function fetchVapiCallDetails(apiKey: string, callId: string): Promise<VapiCall | null> {
+    try {
+        const res = await fetch(`${VAPI_BASE_URL}/call/${callId}`, {
+            headers: {
+                Authorization: `Bearer ${apiKey}`,
+                'Content-Type': 'application/json',
+            },
+        });
+
+        if (!res.ok) {
+            return null;
+        }
+
+        return await res.json();
+    } catch (error) {
+        return null;
+    }
+}
+
+
 async function getAgentIdByVapiId(clientId: string, vapiAssistantId: string): Promise<string | null> {
     const { data } = await supabase
         .from('agents')
@@ -94,19 +117,22 @@ async function syncClientCalls(clientId: string, vapiKey: string, vapiOrgId: str
     const calls = await fetchVapiCalls(vapiKey, 100);
     console.log(`Found ${calls.length} calls from Vapi`);
 
-    for (const call of calls) {
+    for (const basicCall of calls) {
         try {
             // Skip if call doesn't belong to this org
-            if (call.orgId !== vapiOrgId) {
+            if (basicCall.orgId !== vapiOrgId) {
                 skipped++;
                 continue;
             }
 
             // Skip non-ended calls
-            if (call.status !== 'ended') {
+            if (basicCall.status !== 'ended') {
                 skipped++;
                 continue;
             }
+
+            // Fetch full call details to get transcript (list endpoint doesn't include it)
+            const call = await fetchVapiCallDetails(vapiKey, basicCall.id) || basicCall;
 
             // Look up agent by vapi_id
             let agentId: string | null = null;
@@ -129,6 +155,7 @@ async function syncClientCalls(clientId: string, vapiKey: string, vapiOrgId: str
                     .map(m => `${m.role}: ${m.message || m.content || ''}`)
                     .join('\n');
             }
+
 
             // Get recording URL
             const recordingUrl = call.artifact?.recordingUrl || null;
