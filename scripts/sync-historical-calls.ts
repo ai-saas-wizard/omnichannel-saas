@@ -50,9 +50,10 @@ interface VapiCall {
     };
 }
 
-async function fetchVapiCalls(apiKey: string, limit: number = 100): Promise<VapiCall[]> {
+async function fetchVapiCalls(apiKey: string, limit: number = 1000): Promise<VapiCall[]> {
     try {
-        const res = await fetch(`${VAPI_BASE_URL}/call?limit=${limit}`, {
+        // Vapi API supports up to 1000 calls per request
+        const res = await fetch(`${VAPI_BASE_URL}/call?limit=${Math.min(limit, 1000)}`, {
             headers: {
                 Authorization: `Bearer ${apiKey}`,
                 'Content-Type': 'application/json',
@@ -114,7 +115,7 @@ async function syncClientCalls(clientId: string, vapiKey: string, vapiOrgId: str
     let errors = 0;
 
     console.log(`\nFetching calls for client ${clientId}...`);
-    const calls = await fetchVapiCalls(vapiKey, 100);
+    const calls = await fetchVapiCalls(vapiKey, 1000);
     console.log(`Found ${calls.length} calls from Vapi`);
 
     for (const basicCall of calls) {

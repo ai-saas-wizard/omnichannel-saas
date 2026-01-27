@@ -640,19 +640,20 @@ export async function POST(request: Request) {
             if (call.status === 'ended') {
                 console.log('[VAPI WEBHOOK] Call ended via status-update:', call.id);
                 await handleEndOfCall(call, message?.artifact, message?.assistant, message?.endedReason, rawPayload);
-            } else {
-                await handleCallStarted(call); // Ensure call exists
-                await handleCallUpdate(call);
+            } else if (call.status === 'in-progress') {
+                // Only track when call actually starts (not every status update)
+                await handleCallStarted(call);
             }
+            // Skip other status updates to save CPU
         } else if (messageType === 'conversation-update') {
-            await handleCallStarted(call); // Ensure call exists
-            await handleCallUpdate(call, conversation);
+            // OPTIMIZATION: Skip live transcript updates to reduce CPU usage
+            // Transcripts are captured in end-of-call-report instead
+            console.log('[VAPI WEBHOOK] Skipping conversation-update for CPU optimization');
+            return NextResponse.json({ received: true });
         } else if (messageType === 'end-of-call-report') {
             await handleEndOfCall(call, message?.artifact, message?.assistant, message?.endedReason, rawPayload);
-        } else {
-            // For any other event type, try to create/update the call
-            await handleCallStarted(call);
         }
+        // Skip other event types - we only care about start/end
 
 
         // --- WEBHOOK FORWARDING LOGIC ---
